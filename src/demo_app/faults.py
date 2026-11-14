@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import signal
 import threading
 
 log = logging.getLogger("demo_app.faults")
@@ -13,9 +14,19 @@ LEAK_LOG_EVERY = 5
 
 
 def hang() -> None:
-    """Block the event loop for good, so nothing answers until the process restarts."""
+    """Block the event loop for good, so nothing answers until the process restarts.
+
+    Uvicorn's SIGTERM handler only asks the blocked loop to stop, so a restart would wait out
+    the stop timeout. A handler that exits at once lets `docker stop` work during the hang.
+    """
     log.warning("session sync: waiting for lock held by worker 3")
+    signal.signal(signal.SIGTERM, _exit_on_signal)
+    signal.signal(signal.SIGINT, _exit_on_signal)
     threading.Event().wait()
+
+
+def _exit_on_signal(signum: int, _frame: object) -> None:
+    os._exit(128 + signum)
 
 
 def crash() -> None:

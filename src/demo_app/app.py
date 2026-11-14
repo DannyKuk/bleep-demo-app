@@ -96,7 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/faults/hang")
     async def fault_hang(body: FaultRequest) -> dict:
         check_password(body)
-        log.warning("fault triggered: hang")
+        log.debug("fault triggered: hang")
         asyncio.get_running_loop().call_later(0.2, faults.hang)
         return {"triggered": "hang"}
 
@@ -104,14 +104,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def fault_error(body: FaultRequest) -> dict:
         check_password(body)
         state.error_reason = "cache connection pool exhausted (0/20 connections available)"
-        log.error("fault triggered: error. %s", state.error_reason)
         return {"triggered": "error"}
 
     @app.post("/api/faults/leak")
     async def fault_leak(body: FaultRequest) -> dict:
         check_password(body)
         if state.leak is None:
-            log.warning("fault triggered: leak")
+            log.debug("fault triggered: leak")
             state.leak = faults.Leak()
             state.leak_task = asyncio.create_task(state.leak.run())
         return {"triggered": "leak"}
@@ -119,7 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/faults/crash")
     def fault_crash(body: FaultRequest) -> dict:
         check_password(body)
-        log.warning("fault triggered: crash")
+        log.debug("fault triggered: crash")
         faults.crash()
         return {"triggered": "crash"}
 

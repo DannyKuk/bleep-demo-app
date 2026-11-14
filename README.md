@@ -77,6 +77,10 @@ until the setting is changed and the app is redeployed.
 4. Environment variables: set `DEMO_PASSWORD`. Leave `HOST` and `FAIL_AFTER_S` unset.
 5. Deploy.
 
+The image has its own health check (`/health` on `PORT`, run with Python since the image has no
+curl), so Coolify and `docker ps` show the container as healthy or unhealthy without extra setup.
+Dependencies are installed from `uv.lock`, so a redeploy builds the same versions.
+
 ## Endpoints
 
 | Path | |
