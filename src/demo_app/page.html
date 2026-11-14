@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo app</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; color: #1b1f24; }
+  h1 { margin-bottom: 0.25rem; }
+  .muted { color: #5b6470; }
+  .badge { display: inline-block; padding: 0.1rem 0.6rem; border-radius: 1rem; font-size: 0.85rem; }
+  .ok { background: #d8f3dc; color: #1b4332; }
+  .bad { background: #ffd6d6; color: #7a1f1f; }
+  .off { background: #e9ecef; color: #495057; }
+  section { border: 1px solid #d9dde3; border-radius: 8px; padding: 1rem 1.25rem; margin: 1.25rem 0; }
+  button { font: inherit; padding: 0.4rem 0.9rem; margin: 0.25rem 0.25rem 0.25rem 0; cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  input { font: inherit; padding: 0.35rem; }
+  #message { min-height: 1.5rem; }
+  dt { font-weight: 600; }
+  dd { margin: 0 0 0.5rem; }
+</style>
+</head>
+<body>
+<h1>Demo app</h1>
+<p class="muted">A small service that breaks on request. <a href="https://github.com/DannyKuk/bleep-demo-app">Source and settings</a></p>
+
+<section>
+  <h2>Status</h2>
+  <p>Health: <span id="health" class="badge off">checking</span> <span class="muted" id="uptime"></span></p>
+  <h3>Configuration</h3>
+  <dl>
+    <dt>HOST</dt>
+    <dd><code id="host"></code> <span id="host-state" class="badge off"></span></dd>
+    <dt>FAIL_AFTER_S</dt>
+    <dd><code id="fail-after"></code> <span id="fail-after-state" class="badge off"></span></dd>
+  </dl>
+</section>
+
+<section>
+  <h2>Faults</h2>
+  <p id="disabled-note" class="muted" hidden>The fault buttons are disabled because DEMO_PASSWORD is not set.</p>
+  <p><label>Password <input id="password" type="password" autocomplete="off"></label></p>
+  <div>
+    <button data-fault="hang">Hang</button>
+    <button data-fault="error">Error state</button>
+    <button data-fault="leak">Memory leak</button>
+    <button data-fault="crash">Crash</button>
+  </div>
+  <p class="muted">Each one lasts until the app restarts.</p>
+  <p id="message" role="status"></p>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const buttons = document.querySelectorAll("button[data-fault]");
+
+function badge(el, text, cls) { el.textContent = text; el.className = "badge " + cls; }
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/status");
+    const s = await res.json();
+    badge($("health"), s.healthy ? "healthy" : "unhealthy", s.healthy ? "ok" : "bad");
+    $("uptime").textContent = "up " + s.uptime_s + " s";
+    $("host").textContent = s.config.host;
+    badge($("host-state"), s.config.host_is_loopback ? "loopback only" : "all interfaces", s.config.host_is_loopback ? "bad" : "ok");
+    const f = s.config.fail_after_s;
+    $("fail-after").textContent = f === null ? "unset" : f + " s";
+    badge($("fail-after-state"), f === null ? "off" : "active", f === null ? "off" : "bad");
+    buttons.forEach((b) => (b.disabled = !s.faults_enabled));
+    $("password").disabled = !s.faults_enabled;
+    $("disabled-note").hidden = s.faults_enabled;
+  } catch (e) {
+    badge($("health"), "not answering", "bad");
+  }
+}
+
+buttons.forEach((b) => b.addEventListener("click", async () => {
+  $("message").textContent = "";
+  try {
+    const res = await fetch("/api/faults/" + b.dataset.fault, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("password").value }),
+    });
+    const body = await res.json();
+    $("message").textContent = res.ok ? "Triggered: " + body.triggered : (body.detail || "Failed");
+  } catch (e) {
+    $("message").textContent = "No answer from the app.";
+  }
+  refresh();
+}));
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
