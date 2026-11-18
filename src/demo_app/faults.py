@@ -8,9 +8,14 @@ import threading
 
 log = logging.getLogger("demo_app.faults")
 
-LEAK_CHUNK_BYTES = 8 * 1024 * 1024
+MB = 1024 * 1024
+# The leak grows fast up to its budget, then slowly, so with a 256 MB limit `/health` fails for
+# about five minutes before the out-of-memory kill: long enough for a watcher to notice.
+LEAK_BUDGET_BYTES = 128 * MB
+LEAK_FAST_CHUNK_BYTES = 8 * MB
+LEAK_SLOW_CHUNK_BYTES = MB // 4
 LEAK_INTERVAL_S = 1.0
-LEAK_LOG_EVERY = 5
+LEAK_LOG_EVERY_BYTES = 40 * MB
 
 
 def hang() -> None:
@@ -53,18 +58,51 @@ def _decode_token(session: dict[str, str | None]) -> None:
 
 
 class Leak:
-    """Holds on to a bit more memory every second and logs the cache growing."""
+    """Holds on to more memory every second and logs the cache growing. Past its budget it makes
+    the service unhealthy and grows slower, until the container runs out of memory."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        budget_bytes: int = LEAK_BUDGET_BYTES,
+        fast_chunk_bytes: int = LEAK_FAST_CHUNK_BYTES,
+        slow_chunk_bytes: int = LEAK_SLOW_CHUNK_BYTES,
+    ) -> None:
+        self.budget_bytes = budget_bytes
+        self.fast_chunk_bytes = fast_chunk_bytes
+        self.slow_chunk_bytes = slow_chunk_bytes
         self.chunks: list[bytes] = []
+        self.size_bytes = 0
+
+    @property
+    def over_budget(self) -> bool:
+        return self.size_bytes > self.budget_bytes
+
+    def unhealthy_reason(self) -> str | None:
+        if not self.over_budget:
+            return None
+        return (
+            f"report cache holds {self.size_bytes // MB} MB, over its {self.budget_bytes // MB} MB"
+            " budget; report requests time out"
+        )
+
+    def grow(self) -> None:
+        """Add one entry: a big one while under the budget, a small one past it."""
+        was_over = self.over_budget
+        before = self.size_bytes
+        chunk = self.slow_chunk_bytes if was_over else self.fast_chunk_bytes
+        self.chunks.append(b"\xa5" * chunk)
+        self.size_bytes += chunk
+        if not was_over and self.over_budget:
+            log.error("%s", self.unhealthy_reason())
+        if self.size_bytes // LEAK_LOG_EVERY_BYTES > before // LEAK_LOG_EVERY_BYTES:
+            log.warning(
+                "report cache holds %d entries (%d MB), no eviction",
+                len(self.chunks),
+                self.size_bytes // MB,
+            )
 
     async def run(self) -> None:
         log.warning("report cache: unbounded growth, eviction disabled")
         while True:
-            self.chunks.append(b"\xa5" * LEAK_CHUNK_BYTES)
-            if len(self.chunks) % LEAK_LOG_EVERY == 0:
-                size_mb = len(self.chunks) * LEAK_CHUNK_BYTES // (1024 * 1024)
-                log.warning(
-                    "report cache holds %d entries (%d MB), no eviction", len(self.chunks), size_mb
-                )
+            self.grow()
             await asyncio.sleep(LEAK_INTERVAL_S)
