@@ -60,11 +60,13 @@ The four buttons on the page break the app until it restarts. Each leaves a trac
 | --- | --- | --- | --- |
 | Hang | The process blocks. `/health` and the page stop answering. | `session sync: waiting for lock held by worker 3` | Restart the container. |
 | Error state | `/health` answers 500. | `cache connection pool exhausted (0/20 connections available)`, repeated | Restart the container. |
-| Memory leak | Memory grows by 8 MB a second until Docker kills the container for running out of memory. | `report cache holds N entries (M MB), no eviction` | Restart the container (it restarts on its own if the restart policy allows). |
+| Memory leak | Memory grows by 8 MB a second until the report cache passes its 128 MB budget. Then `/health` answers 500 and memory grows by 256 KB a second, so with a 256 MB limit and no swap Docker kills the container for running out of memory about five minutes later. | `report cache holds N entries (M MB), no eviction`, then `report cache holds M MB, over its 128 MB budget; report requests time out`, repeated | Restart the container (it restarts on its own after the kill if the restart policy allows). |
 | Crash | The process exits with code 1. | `unhandled error in session refresh, shutting down` and a stack trace | Restart the container. |
 
 The memory leak only ends in a kill if the container has a memory limit; see below. Without a
-limit it keeps growing until the host runs out of memory, so always set one.
+limit it keeps growing until the host runs out of memory, so always set one. Give it no swap
+either: `docker run -m 256m` alone adds 256 MB of swap, and the leak then fills that too, so
+`/health` fails for about twenty minutes before the kill. Locally, add `--memory-swap 256m`.
 
 Restarting clears all four. The two settings above are different: they come back after a restart
 until the setting is changed and the app is redeployed.
@@ -73,7 +75,8 @@ until the setting is changed and the app is redeployed.
 
 1. New resource from this repository with the **Dockerfile** build pack.
 2. Port: `3000`. Health check path: `/health`.
-3. Resource limits: memory limit of `256 MB`, so the memory leak ends in an out-of-memory kill.
+3. Resource limits: memory limit of `256 MB` and swap limit of `256 MB` (no swap, Coolify's
+   default), so the memory leak ends in an out-of-memory kill.
 4. Environment variables: set `DEMO_PASSWORD`. Leave `HOST` and `FAIL_AFTER_S` unset.
 5. Deploy.
 

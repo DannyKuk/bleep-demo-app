@@ -118,3 +118,42 @@ def test_load_settings_defaults_and_overrides():
     assert custom.host_is_loopback
     assert (custom.port, custom.fail_after_s, custom.demo_password) == (8080, 10, "x")
     assert load_settings({"HOST": "", "DEMO_PASSWORD": ""}).demo_password is None
+
+
+def small_leak() -> faults.Leak:
+    return faults.Leak(budget_bytes=20, fast_chunk_bytes=8, slow_chunk_bytes=1)
+
+
+def test_leak_grows_fast_until_its_budget_then_slowly():
+    leak = small_leak()
+    sizes = []
+    for _ in range(5):
+        leak.grow()
+        sizes.append(leak.size_bytes)
+    assert sizes == [8, 16, 24, 25, 26]
+
+
+def test_leak_is_healthy_until_over_its_budget(caplog):
+    leak = small_leak()
+    leak.grow()
+    leak.grow()
+    assert leak.unhealthy_reason() is None
+    with caplog.at_level("ERROR"):
+        leak.grow()
+    reason = leak.unhealthy_reason()
+    assert reason is not None and "over its" in reason
+    assert any("over its" in r.getMessage() for r in caplog.records)
+
+
+def test_leak_over_budget_fails_health(monkeypatch):
+    async def idle(self):
+        return None
+
+    monkeypatch.setattr(faults.Leak, "run", idle)
+    with client_for() as client:
+        assert trigger(client, "leak").status_code == 200
+        state = client.app.state.demo
+        assert client.get("/health").status_code == 200
+        state.leak.size_bytes = state.leak.budget_bytes + 1
+        assert client.get("/health").status_code == 500
+        assert client.get("/api/status").json()["healthy"] is False

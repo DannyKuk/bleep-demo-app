@@ -33,6 +33,8 @@ class State:
     def unhealthy_reason(self) -> str | None:
         if self.error_reason:
             return self.error_reason
+        if self.leak is not None and (reason := self.leak.unhealthy_reason()):
+            return reason
         limit = self.settings.fail_after_s
         if limit is not None and time.monotonic() - self.started >= limit:
             return f"FAIL_AFTER_S={limit:g} elapsed, marking the service unhealthy"
